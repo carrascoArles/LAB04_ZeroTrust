@@ -21,8 +21,10 @@ login() {
   verifier=$(openssl rand -base64 48 | tr -d '=+/\n' | cut -c1-64)
   challenge=$(printf %s "$verifier" | openssl dgst -sha256 -binary | openssl base64 -A | tr '+/' '-_' | tr -d '=')
   echo
-  echo "=== Login de $1@aqp-solidaria.test: abre esto en una ventana PRIVADA NUEVA"
-  echo "$DOMAIN/oauth2/authorize?response_type=code&client_id=$CLIENT&redirect_uri=$SPA/callback&scope=openid+email+api/projects.write+api/donations.write+api/donations.read+api/audit.read&code_challenge_method=S256&code_challenge=$challenge"
+  echo "=== Login de $1@aqp-solidaria.test"
+  echo "Cierra TODAS las ventanas privadas y abre una nueva: si no, Cognito reutiliza la sesión anterior."
+  # prompt=login obliga a autenticarse aunque haya una sesión abierta en el navegador.
+  echo "$DOMAIN/oauth2/authorize?response_type=code&client_id=$CLIENT&redirect_uri=$SPA/callback&scope=openid+email+api/projects.write+api/donations.write+api/donations.read+api/audit.read&code_challenge_method=S256&code_challenge=$challenge&prompt=login"
   echo "Sin frontend publicado verás un error de CloudFront: es normal. Copia la URL completa."
   read -r -p "Pega la URL aquí: " raw
   code=${raw##*code=}
@@ -37,6 +39,23 @@ login() {
     echo "Login fallido: $(echo "$resp" | jq -r '.error // "sin detalle"')" >&2
     exit 1
   fi
+  # Comprueba que la sesión sea del usuario esperado. Solo lee claims, no muestra el token.
+  local email groups
+  email=$(jwt_claim "$ID" '.email')
+  groups=$(jwt_claim "$ACCESS" '."cognito:groups" // [] | join(",")')
+  if [ "$email" != "$1@aqp-solidaria.test" ]; then
+    echo "La sesión es de $email, no de $1@aqp-solidaria.test. Cierra todas las ventanas privadas y vuelve a ejecutar." >&2
+    exit 1
+  fi
+  echo "OK: sesión de $email, grupos: $groups"
+}
+
+# jwt_claim TOKEN FILTRO_JQ: decodifica el payload (sin validar firma; solo para diagnóstico).
+jwt_claim() {
+  local p
+  p=$(printf %s "$1" | cut -d. -f2 | tr '_-' '/+')
+  while [ $(( ${#p} % 4 )) -ne 0 ]; do p="$p="; done
+  printf %s "$p" | base64 -d 2>/dev/null | jq -r "$2"
 }
 
 # call TOKEN METODO RUTA CUERPO [opciones de curl]
