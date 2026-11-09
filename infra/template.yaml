@@ -1,0 +1,766 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  AQP-SOLIDARIA - Plataforma de Donaciones Seguras. Arquitectura serverless con
+  modelo de seguridad Zero Trust (NIST SP 800-207). Prototipo academico: no se
+  procesan pagos reales.
+
+# ---------------------------------------------------------------------------
+# Parametros y condiciones
+# ---------------------------------------------------------------------------
+Parameters:
+  StageName:
+    Type: String
+    Default: academic
+    AllowedValues: [academic, prod]
+    Description: Stage del API. La ruta de simulacion solo existe en "academic" (CA-06.1).
+
+Conditions:
+  IsAcademic: !Equals [!Ref StageName, academic]
+
+# ---------------------------------------------------------------------------
+# Valores comunes de las funciones Lambda
+# ---------------------------------------------------------------------------
+Globals:
+  Function:
+    Runtime: nodejs24.x
+    Architectures: [arm64]
+    MemorySize: 256
+    Timeout: 10
+    CodeUri: ../backend/dist/
+    LoggingConfig:
+      LogFormat: JSON # CA-NF07.1: logs JSON
+      ApplicationLogLevel: INFO
+      SystemLogLevel: WARN
+    Environment:
+      Variables:
+        STAGE: !Ref StageName
+
+Resources:
+  # =========================================================================
+  # POLICY ADMINISTRATOR (PA) - Amazon Cognito
+  # =========================================================================
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: !Sub aqp-solidaria-${StageName}
+      UserPoolTier: ESSENTIALS
+      # Solo usuarios de prueba creados por el equipo (CA-NF10.1).
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+      UsernameAttributes: [email]
+      AutoVerifiedAttributes: [email]
+      # Cognito no admite MFA por grupo: OPTIONAL a nivel de pool y aprovisionamiento
+      # controlado de GESTOR/AUDITOR (ver AD-09 en docs/threat-model.md).
+      # Solo TOTP: sin SMS (CA-11.1).
+      MfaConfiguration: "OPTIONAL"
+      EnabledMfas: [SOFTWARE_TOKEN_MFA]
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireLowercase: true
+          RequireUppercase: true
+          RequireNumbers: true
+          RequireSymbols: true
+      UsernameConfiguration:
+        CaseSensitive: false
+
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      UserPoolId: !Ref UserPool
+      Domain: !Sub aqp-solidaria-${StageName}-${AWS::AccountId}
+      ManagedLoginVersion: 1
+
+  ApiResourceServer:
+    Type: AWS::Cognito::UserPoolResourceServer
+    Properties:
+      UserPoolId: !Ref UserPool
+      Identifier: api
+      Name: AQP-SOLIDARIA API
+      Scopes:
+        - {ScopeName: projects.write, ScopeDescription: Crear y publicar proyectos}
+        - {ScopeName: donations.write, ScopeDescription: Crear y simular donaciones}
+        - {ScopeName: donations.read, ScopeDescription: Consultar donaciones propias}
+        - {ScopeName: audit.read, ScopeDescription: Consultar eventos de auditoria}
+
+  # Cliente publico de la SPA: sin secreto y solo Authorization Code.
+  # El scope exige un access token en el PEP; el rol lo decide Lambda (authz).
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    DependsOn: ApiResourceServer
+    Properties:
+      UserPoolId: !Ref UserPool
+      ClientName: !Sub aqp-solidaria-spa-${StageName}
+      GenerateSecret: false
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthFlows: [code] # sin flujo implicito (CA-03.1)
+      AllowedOAuthScopes:
+        - openid
+        - email
+        - api/projects.write
+        - api/donations.write
+        - api/donations.read
+        - api/audit.read
+      SupportedIdentityProviders: [COGNITO]
+      CallbackURLs:
+        - !Sub https://${Distribution.DomainName}/callback
+      LogoutURLs:
+        - !Sub https://${Distribution.DomainName}/
+      ExplicitAuthFlows: [ALLOW_USER_SRP_AUTH, ALLOW_REFRESH_TOKEN_AUTH]
+      AccessTokenValidity: 15 # CA-03.3: vigencia menor o igual a 15 minutos
+      IdTokenValidity: 15
+      RefreshTokenValidity: 1
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
+      EnableTokenRevocation: true # CA-03.3
+      PreventUserExistenceErrors: ENABLED
+
+  DonanteGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      UserPoolId: !Ref UserPool
+      GroupName: DONANTE
+      Description: Crea y simula donaciones propias
+  GestorGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      UserPoolId: !Ref UserPool
+      GroupName: GESTOR
+      Description: Crea y publica proyectos (MFA obligatorio)
+  AuditorGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      UserPoolId: !Ref UserPool
+      GroupName: AUDITOR
+      Description: Consulta eventos de auditoria (MFA obligatorio)
+
+  # =========================================================================
+  # POLICY ENFORCEMENT POINT (PEP) - API Gateway HTTP API + JWT authorizer
+  # =========================================================================
+  Api:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: !Ref StageName
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 50
+        ThrottlingRateLimit: 25
+      AccessLogSettings:
+        DestinationArn: !GetAtt ApiAccessLogs.Arn
+        Format: '{"requestId":"$context.requestId","routeKey":"$context.routeKey","status":"$context.status","responseLatency":"$context.responseLatency","authorizerError":"$context.authorizer.error"}'
+      CorsConfiguration:
+        AllowOrigins:
+          - !Sub https://${Distribution.DomainName}
+        AllowMethods: [GET, POST, PATCH, OPTIONS]
+        AllowHeaders: [authorization, content-type, idempotency-key]
+        MaxAge: 600
+      Auth:
+        # Denegar por defecto: toda ruta exige JWT salvo las marcadas como NONE.
+        DefaultAuthorizer: CognitoJwt
+        Authorizers:
+          CognitoJwt:
+            IdentitySource: $request.header.Authorization
+            JwtConfiguration:
+              issuer: !Sub https://cognito-idp.${AWS::Region}.amazonaws.com/${UserPool}
+              audience:
+                - !Ref UserPoolClient
+
+  # =========================================================================
+  # LAMBDA - una funcion y un rol IAM por caso de uso (CA-NF03.1)
+  # La politica AWSLambdaBasicExecutionRole que SAM agrega solo permite escribir
+  # logs. No se usa Action "*" ni acceso a tablas con comodin.
+  # =========================================================================
+
+  # ---- projects (publico) ----
+  ListProjectsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: projects/list.handler
+      Description: "GET /v1/projects - catalogo publico (HU-01, HU-09)"
+      Environment:
+        Variables:
+          PROJECTS_TABLE: !Ref ProjectsTable
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action: [dynamodb:Query]
+              Resource: !Sub ${ProjectsTable.Arn}/index/status-createdAt
+      Events:
+        Route:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref Api
+            Method: GET
+            Path: /v1/projects
+            Auth: {Authorizer: NONE}
+
+  GetProjectFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: projects/get.handler
+      Description: "GET /v1/projects/{projectId} - detalle publico (HU-02)"
+      Environment:
+        Variables:
+          PROJECTS_TABLE: !Ref ProjectsTable
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem]
+              Resource: !GetAtt ProjectsTable.Arn
+      Events:
+        Route:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref Api
+            Method: GET
+            Path: /v1/projects/{projectId}
+            Auth: {Authorizer: NONE}
+
+  GetProjectStatsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: projects/stats.handler
+      Description: "GET /v1/projects/{projectId}/stats - agregados publicos (HU-09)"
+      Environment:
+        Variables:
+          PROJECTS_TABLE: !Ref ProjectsTable
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem]
+              Resource: !GetAtt ProjectsTable.Arn
+      Events:
+        Route:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref Api
+            Method: GET
+            Path: /v1/projects/{projectId}/stats
+            Auth: {Authorizer: NONE}
+
+  # ---- projects (GESTOR) ----
+  CreateProjectFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: projects/create.handler
+      Description: "POST /v1/projects - solo GESTOR (HU-08)"
+      Environment:
+        Variables:
+          PROJECTS_TABLE: !Ref ProjectsTable
+          AUDIT_TABLE: !Ref AuditEventsTable
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action: [dynamodb:PutItem]
+              Resource:
+                - !GetAtt ProjectsTable.Arn
+                - !GetAtt AuditEventsTable.Arn
+      Events:
+        Route:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref Api
+            Method: POST
+            Path: /v1/projects
+            Auth:
+              Authorizer: CognitoJwt
+              AuthorizationScopes: [api/projects.write]
+
+  PublishProjectFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: projects/publish.handler
+      Description: "PATCH /v1/projects/{projectId}/publish - solo GESTOR (HU-08)"
+      Environment:
+        Variables:
+          PROJECTS_TABLE: !Ref ProjectsTable
+          AUDIT_TABLE: !Ref AuditEventsTable
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:UpdateItem]
+              Resource: !GetAtt ProjectsTable.Arn
+            - Effect: Allow
+              Action: [dynamodb:PutItem]
+              Resource: !GetAtt AuditEventsTable.Arn
+      Events:
+        Route:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref Api
+            Method: PATCH
+            Path: /v1/projects/{projectId}/publish
+            Auth:
+              Authorizer: CognitoJwt
+              AuthorizationScopes: [api/projects.write]
+
+  # ---- donations (DONANTE) ----
+  CreateDonationFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: donations/create.handler
+      Description: "POST /v1/donations - intencion idempotente (HU-05, AD-05)"
+      Environment:
+        Variables:
+          PROJECTS_TABLE: !Ref ProjectsTable
+          DONATIONS_TABLE: !Ref DonationsTable
+          IDEMPOTENCY_TABLE: !Ref IdempotencyTable
+          AUDIT_TABLE: !Ref AuditEventsTable
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            # La transaccion comprueba que el proyecto siga PUBLICADO sin modificarlo.
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:ConditionCheckItem]
+              Resource: !GetAtt ProjectsTable.Arn
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:PutItem]
+              Resource: !GetAtt IdempotencyTable.Arn
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:PutItem]
+              Resource: !GetAtt DonationsTable.Arn
+            - Effect: Allow
+              Action: [dynamodb:PutItem]
+              Resource: !GetAtt AuditEventsTable.Arn
+      Events:
+        Route:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref Api
+            Method: POST
+            Path: /v1/donations
+            Auth:
+              Authorizer: CognitoJwt
+              AuthorizationScopes: [api/donations.write]
+
+  # Solo se crea en el stage academico: en otro stage la ruta no existe (CA-06.1).
+  SimulateDonationFunction:
+    Type: AWS::Serverless::Function
+    Condition: IsAcademic
+    Properties:
+      Handler: donations/simulate.handler
+      Description: "POST /v1/donations/{donationId}/simulate - transicion unica (HU-06)"
+      Environment:
+        Variables:
+          PROJECTS_TABLE: !Ref ProjectsTable
+          DONATIONS_TABLE: !Ref DonationsTable
+          AUDIT_TABLE: !Ref AuditEventsTable
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:UpdateItem]
+              Resource: !GetAtt DonationsTable.Arn
+            - Effect: Allow
+              Action: [dynamodb:UpdateItem]
+              Resource: !GetAtt ProjectsTable.Arn
+            - Effect: Allow
+              Action: [dynamodb:PutItem]
+              Resource: !GetAtt AuditEventsTable.Arn
+      Events:
+        Route:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref Api
+            Method: POST
+            Path: /v1/donations/{donationId}/simulate
+            Auth:
+              Authorizer: CognitoJwt
+              AuthorizationScopes: [api/donations.write]
+
+  GetMyDonationsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: donations/me.handler
+      Description: "GET /v1/donations/me - solo registros del sub autenticado (HU-07)"
+      Environment:
+        Variables:
+          DONATIONS_TABLE: !Ref DonationsTable
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action: [dynamodb:Query]
+              Resource: !Sub ${DonationsTable.Arn}/index/donorSub-createdAt
+      Events:
+        Route:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref Api
+            Method: GET
+            Path: /v1/donations/me
+            Auth:
+              Authorizer: CognitoJwt
+              AuthorizationScopes: [api/donations.read]
+
+  # Adicion a design.md: permite verificar BOLA por id (CA-07.2, T09).
+  GetDonationFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: donations/get.handler
+      Description: "GET /v1/donations/{donationId} - solo el propietario; ajena = 404 (T09)"
+      Environment:
+        Variables:
+          DONATIONS_TABLE: !Ref DonationsTable
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem]
+              Resource: !GetAtt DonationsTable.Arn
+      Events:
+        Route:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref Api
+            Method: GET
+            Path: /v1/donations/{donationId}
+            Auth:
+              Authorizer: CognitoJwt
+              AuthorizationScopes: [api/donations.read]
+
+  # ---- audit (AUDITOR, extension HU-10) ----
+  GetAuditFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: audit/list.handler
+      Description: "GET /v1/audit - solo AUDITOR (HU-10, extension)"
+      Environment:
+        Variables:
+          AUDIT_TABLE: !Ref AuditEventsTable
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action: [dynamodb:Query]
+              Resource: !GetAtt AuditEventsTable.Arn
+      Events:
+        Route:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref Api
+            Method: GET
+            Path: /v1/audit
+            Auth:
+              Authorizer: CognitoJwt
+              AuthorizationScopes: [api/audit.read]
+
+  # =========================================================================
+  # DATOS - DynamoDB on-demand (design.md, seccion 5)
+  # =========================================================================
+  ProjectsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification: {SSEEnabled: true}
+      AttributeDefinitions:
+        - {AttributeName: projectId, AttributeType: S}
+        - {AttributeName: status, AttributeType: S}
+        - {AttributeName: createdAt, AttributeType: S}
+      KeySchema:
+        - {AttributeName: projectId, KeyType: HASH}
+      GlobalSecondaryIndexes:
+        - IndexName: status-createdAt
+          KeySchema:
+            - {AttributeName: status, KeyType: HASH}
+            - {AttributeName: createdAt, KeyType: RANGE}
+          Projection: {ProjectionType: ALL}
+
+  DonationsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification: {SSEEnabled: true}
+      AttributeDefinitions:
+        - {AttributeName: donationId, AttributeType: S}
+        - {AttributeName: donorSub, AttributeType: S}
+        - {AttributeName: createdAt, AttributeType: S}
+      KeySchema:
+        - {AttributeName: donationId, KeyType: HASH}
+      GlobalSecondaryIndexes:
+        - IndexName: donorSub-createdAt
+          KeySchema:
+            - {AttributeName: donorSub, KeyType: HASH}
+            - {AttributeName: createdAt, KeyType: RANGE}
+          Projection: {ProjectionType: ALL}
+
+  IdempotencyTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification: {SSEEnabled: true}
+      AttributeDefinitions:
+        - {AttributeName: pk, AttributeType: S} # donorSub#createDonation#idempotencyKey
+      KeySchema:
+        - {AttributeName: pk, KeyType: HASH}
+      TimeToLiveSpecification:
+        AttributeName: expiresAt # 24 horas
+        Enabled: true
+
+  AuditEventsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification: {SSEEnabled: true}
+      AttributeDefinitions:
+        - {AttributeName: eventType, AttributeType: S}
+        - {AttributeName: sk, AttributeType: S} # timestamp#eventId
+      KeySchema:
+        - {AttributeName: eventType, KeyType: HASH}
+        - {AttributeName: sk, KeyType: RANGE}
+
+  # =========================================================================
+  # ENTREGA DEL FRONTEND - S3 privado + CloudFront con OAC
+  # =========================================================================
+  SpaBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: {SSEAlgorithm: AES256}
+
+  SpaBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SpaBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowCloudFrontOacOnly
+            Effect: Allow
+            Principal: {Service: cloudfront.amazonaws.com}
+            Action: s3:GetObject
+            Resource: !Sub ${SpaBucket.Arn}/*
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${Distribution}
+
+  SpaOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub aqp-solidaria-oac-${StageName}-${AWS::AccountId}
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  # CA-NF11.2. connect-src usa comodin regional para evitar una dependencia
+  # circular (API -> Distribution -> esta politica -> API). Ver research.md R7.
+  SecurityHeadersPolicy:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub aqp-solidaria-security-${StageName}-${AWS::AccountId}
+        SecurityHeadersConfig:
+          ContentSecurityPolicy:
+            Override: true
+            ContentSecurityPolicy: !Sub "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://*.execute-api.${AWS::Region}.amazonaws.com https://cognito-idp.${AWS::Region}.amazonaws.com https://*.auth.${AWS::Region}.amazoncognito.com; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+          StrictTransportSecurity:
+            Override: true
+            AccessControlMaxAgeSec: 31536000
+            IncludeSubdomains: true
+          ContentTypeOptions:
+            Override: true
+          ReferrerPolicy:
+            Override: true
+            ReferrerPolicy: strict-origin-when-cross-origin
+          FrameOptions:
+            Override: true
+            FrameOption: DENY
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: AQP-SOLIDARIA SPA
+        DefaultRootObject: index.html
+        HttpVersion: http2
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: SpaOrigin
+            DomainName: !GetAtt SpaBucket.RegionalDomainName
+            OriginAccessControlId: !Ref SpaOriginAccessControl
+            S3OriginConfig:
+              OriginAccessIdentity: ""
+        DefaultCacheBehavior:
+          TargetOriginId: SpaOrigin
+          ViewerProtocolPolicy: redirect-to-https # CA-NF01.1
+          AllowedMethods: [GET, HEAD]
+          CachedMethods: [GET, HEAD]
+          Compress: true
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6 # Managed-CachingOptimized
+          ResponseHeadersPolicyId: !Ref SecurityHeadersPolicy
+        # Las rutas de la SPA las resuelve React Router.
+        CustomErrorResponses:
+          - {ErrorCode: 403, ResponseCode: 200, ResponsePagePath: /index.html}
+          - {ErrorCode: 404, ResponseCode: 200, ResponsePagePath: /index.html}
+
+  # =========================================================================
+  # TELEMETRIA - CloudWatch Logs (retencion 14 dias) y CloudTrail
+  # =========================================================================
+  ApiAccessLogs:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      RetentionInDays: 14
+
+  ListProjectsLogs:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${ListProjectsFunction}
+      RetentionInDays: 14
+  GetProjectLogs:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${GetProjectFunction}
+      RetentionInDays: 14
+  GetProjectStatsLogs:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${GetProjectStatsFunction}
+      RetentionInDays: 14
+  CreateProjectLogs:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${CreateProjectFunction}
+      RetentionInDays: 14
+  PublishProjectLogs:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${PublishProjectFunction}
+      RetentionInDays: 14
+  CreateDonationLogs:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${CreateDonationFunction}
+      RetentionInDays: 14
+  SimulateDonationLogs:
+    Type: AWS::Logs::LogGroup
+    Condition: IsAcademic
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${SimulateDonationFunction}
+      RetentionInDays: 14
+  GetMyDonationsLogs:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${GetMyDonationsFunction}
+      RetentionInDays: 14
+  GetDonationLogs:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${GetDonationFunction}
+      RetentionInDays: 14
+  GetAuditLogs:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${GetAuditFunction}
+      RetentionInDays: 14
+
+  TrailBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: {SSEAlgorithm: AES256}
+      LifecycleConfiguration:
+        Rules:
+          - {Id: ExpireTrailLogs, Status: Enabled, ExpirationInDays: 14}
+
+  TrailBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref TrailBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: CloudTrailAclCheck
+            Effect: Allow
+            Principal: {Service: cloudtrail.amazonaws.com}
+            Action: s3:GetBucketAcl
+            Resource: !GetAtt TrailBucket.Arn
+          - Sid: CloudTrailWrite
+            Effect: Allow
+            Principal: {Service: cloudtrail.amazonaws.com}
+            Action: s3:PutObject
+            Resource: !Sub ${TrailBucket.Arn}/AWSLogs/${AWS::AccountId}/*
+            Condition:
+              StringEquals:
+                s3:x-amz-acl: bucket-owner-full-control
+
+  Trail:
+    Type: AWS::CloudTrail::Trail
+    DependsOn: TrailBucketPolicy
+    Properties:
+      S3BucketName: !Ref TrailBucket
+      IsLogging: true
+      IsMultiRegionTrail: false
+      IncludeGlobalServiceEvents: true
+      EnableLogFileValidation: true
+
+Outputs:
+  ApiUrl:
+    Description: URL base del API (HTTPS)
+    Value: !Sub https://${Api}.execute-api.${AWS::Region}.amazonaws.com/${StageName}
+  SpaUrl:
+    Description: URL publica de la SPA (HTTPS)
+    Value: !Sub https://${Distribution.DomainName}
+  SpaBucketName:
+    Description: Bucket privado donde se publica el build de la SPA
+    Value: !Ref SpaBucket
+  UserPoolId:
+    Value: !Ref UserPool
+  UserPoolClientId:
+    Value: !Ref UserPoolClient
+  CognitoDomain:
+    Value: !Sub https://${UserPoolDomain}.auth.${AWS::Region}.amazoncognito.com

@@ -1,0 +1,338 @@
+openapi: 3.1.0
+info:
+  title: AQP-SOLIDARIA API
+  version: 0.1.0
+  description: >
+    Contrato de la Plataforma de Donaciones Seguras. Prototipo academico: todas
+    las donaciones son simuladas y no se realiza ningun cobro.
+servers:
+  - url: https://{apiId}.execute-api.us-east-2.amazonaws.com/academic
+    variables:
+      apiId:
+        default: pendiente-de-despliegue
+tags:
+  - name: projects
+  - name: donations
+  - name: audit
+security: []
+paths:
+  /v1/projects:
+    get:
+      tags: [projects]
+      operationId: listProjects
+      summary: Catalogo publico de proyectos PUBLICADO (HU-01, HU-09)
+      security: []
+      responses:
+        "200":
+          description: Lista de proyectos publicados; sin datos de donantes
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: "#/components/schemas/ProjectPublic"}
+    post:
+      tags: [projects]
+      operationId: createProject
+      summary: Crea un proyecto en BORRADOR; solo GESTOR (HU-08)
+      security:
+        - cognitoJwt: [api/projects.write]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/CreateProjectRequest"}
+      responses:
+        "201":
+          description: Proyecto creado en BORRADOR
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ProjectPublic"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+  /v1/projects/{projectId}:
+    get:
+      tags: [projects]
+      operationId: getProject
+      summary: Detalle de un proyecto PUBLICADO (HU-02)
+      security: []
+      parameters:
+        - {$ref: "#/components/parameters/ProjectId"}
+      responses:
+        "200":
+          description: Detalle sin datos personales de donantes
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ProjectPublic"}
+        "404": {$ref: "#/components/responses/Error"}
+  /v1/projects/{projectId}/stats:
+    get:
+      tags: [projects]
+      operationId: getProjectStats
+      summary: Monto confirmado agregado (HU-09)
+      security: []
+      parameters:
+        - {$ref: "#/components/parameters/ProjectId"}
+      responses:
+        "200":
+          description: Solo cifras agregadas; excluye pendientes y rechazadas
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [projectId, goalAmountCents, confirmedAmountCents, currency]
+                properties:
+                  projectId: {type: string, format: uuid}
+                  goalAmountCents: {type: integer, minimum: 1}
+                  confirmedAmountCents: {type: integer, minimum: 0}
+                  currency: {type: string, const: PEN}
+        "404": {$ref: "#/components/responses/Error"}
+  /v1/projects/{projectId}/publish:
+    patch:
+      tags: [projects]
+      operationId: publishProject
+      summary: Publica un proyecto en BORRADOR; solo GESTOR (HU-08)
+      security:
+        - cognitoJwt: [api/projects.write]
+      parameters:
+        - {$ref: "#/components/parameters/ProjectId"}
+      responses:
+        "200":
+          description: Proyecto publicado
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ProjectPublic"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+  /v1/donations:
+    post:
+      tags: [donations]
+      operationId: createDonation
+      summary: Registra una intencion de donacion simulada; solo DONANTE (HU-05)
+      description: >
+        El donorSub se obtiene del token verificado, nunca del cuerpo. La reserva
+        de la clave de idempotencia y la donacion se escriben en un unico
+        TransactWriteItems. Misma clave y misma carga devuelve el mismo resultado;
+        misma clave con carga distinta devuelve 409.
+      security:
+        - cognitoJwt: [api/donations.write]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: {type: string, format: uuid}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/CreateDonationRequest"}
+      responses:
+        "201":
+          description: Donacion creada en PENDIENTE_SIMULACION, sin cargo
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Donation"}
+        "400": {$ref: "#/components/responses/Error"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+  /v1/donations/me:
+    get:
+      tags: [donations]
+      operationId: getMyDonations
+      summary: Historial del usuario autenticado; solo DONANTE (HU-07)
+      security:
+        - cognitoJwt: [api/donations.read]
+      responses:
+        "200":
+          description: Solo registros del sub autenticado
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: "#/components/schemas/Donation"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+  /v1/donations/{donationId}:
+    get:
+      tags: [donations]
+      operationId: getDonation
+      summary: Consulta una donacion propia; ajena o inexistente devuelve 404 (HU-07, T09)
+      security:
+        - cognitoJwt: [api/donations.read]
+      parameters:
+        - {$ref: "#/components/parameters/DonationId"}
+      responses:
+        "200":
+          description: Donacion del sub autenticado
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Donation"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+  /v1/donations/{donationId}/simulate:
+    post:
+      tags: [donations]
+      operationId: simulateDonation
+      summary: Simula la confirmacion de una donacion propia (HU-06)
+      description: >
+        Solo existe en el stage academic. Solo la primera transicion valida
+        modifica el monto confirmado.
+      security:
+        - cognitoJwt: [api/donations.write]
+      parameters:
+        - {$ref: "#/components/parameters/DonationId"}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [outcome]
+              properties:
+                outcome:
+                  type: string
+                  enum: [CONFIRMADA_SIMULADA, RECHAZADA_SIMULADA]
+      responses:
+        "200":
+          description: Transicion aplicada
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Donation"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+        "404": {$ref: "#/components/responses/Error"}
+        "409": {$ref: "#/components/responses/Error"}
+  /v1/audit:
+    get:
+      tags: [audit]
+      operationId: listAuditEvents
+      summary: Consulta de eventos de auditoria; solo AUDITOR (HU-10, extension)
+      security:
+        - cognitoJwt: [api/audit.read]
+      parameters:
+        - name: eventType
+          in: query
+          required: true
+          schema: {type: string}
+        - name: from
+          in: query
+          schema: {type: string, format: date-time}
+        - name: to
+          in: query
+          schema: {type: string, format: date-time}
+      responses:
+        "200":
+          description: Eventos sin tokens, claves ni datos financieros
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: "#/components/schemas/AuditEvent"}
+        "401": {$ref: "#/components/responses/Error"}
+        "403": {$ref: "#/components/responses/Error"}
+components:
+  securitySchemes:
+    cognitoJwt:
+      type: oauth2
+      description: Access token de Cognito. Un ID token no incluye scopes y se rechaza con 401.
+      flows:
+        authorizationCode:
+          authorizationUrl: https://pendiente.auth.us-east-2.amazoncognito.com/oauth2/authorize
+          tokenUrl: https://pendiente.auth.us-east-2.amazoncognito.com/oauth2/token
+          scopes:
+            api/projects.write: Crear y publicar proyectos
+            api/donations.write: Crear y simular donaciones
+            api/donations.read: Consultar donaciones propias
+            api/audit.read: Consultar eventos de auditoria
+  parameters:
+    ProjectId:
+      name: projectId
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+    DonationId:
+      name: donationId
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+  responses:
+    Error:
+      description: Error uniforme, sin detalles internos
+      content:
+        application/json:
+          schema: {$ref: "#/components/schemas/Error"}
+  schemas:
+    Error:
+      type: object
+      required: [code, message, requestId]
+      properties:
+        code: {type: string}
+        message: {type: string}
+        requestId: {type: string}
+    ProjectPublic:
+      type: object
+      required: [projectId, title, description, goalAmountCents, confirmedAmountCents, currency, status]
+      properties:
+        projectId: {type: string, format: uuid}
+        title: {type: string}
+        description: {type: string}
+        goalAmountCents: {type: integer, minimum: 1}
+        confirmedAmountCents: {type: integer, minimum: 0}
+        currency: {type: string, const: PEN}
+        status: {type: string, enum: [BORRADOR, PUBLICADO]}
+    CreateProjectRequest:
+      type: object
+      additionalProperties: false
+      required: [title, description, goalAmountCents]
+      properties:
+        title: {type: string, minLength: 1, maxLength: 120}
+        description: {type: string, minLength: 1, maxLength: 2000}
+        goalAmountCents: {type: integer, minimum: 1}
+    CreateDonationRequest:
+      type: object
+      additionalProperties: false
+      required: [projectId, amountCents]
+      properties:
+        projectId: {type: string, format: uuid}
+        amountCents: {type: integer, minimum: 100, maximum: 100000}
+    Donation:
+      type: object
+      required: [donationId, projectId, amountCents, currency, status, createdAt]
+      properties:
+        donationId: {type: string, format: uuid}
+        projectId: {type: string, format: uuid}
+        amountCents: {type: integer}
+        currency: {type: string, const: PEN}
+        status:
+          type: string
+          enum: [PENDIENTE_SIMULACION, CONFIRMADA_SIMULADA, RECHAZADA_SIMULADA]
+        createdAt: {type: string, format: date-time}
+    AuditEvent:
+      type: object
+      required: [eventId, timestamp, requestId, actorRef, action, resourceRef, outcome]
+      properties:
+        eventId: {type: string}
+        timestamp: {type: string, format: date-time}
+        requestId: {type: string}
+        actorRef: {type: string, description: Seudonimo del actor}
+        action: {type: string}
+        resourceRef: {type: string}
+        outcome: {type: string}

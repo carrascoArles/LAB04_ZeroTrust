@@ -1,0 +1,7 @@
+stateDiagram-v2
+    direction LR
+    [*] --> PENDIENTE_SIMULACION: POST /v1/donations (201)
+    PENDIENTE_SIMULACION --> CONFIRMADA_SIMULADA: simulate, suma al acumulado
+    PENDIENTE_SIMULACION --> RECHAZADA_SIMULADA: simulate, no cambia cifras
+    CONFIRMADA_SIMULADA --> [*]: otra transición = 409
+    RECHAZADA_SIMULADA --> [*]: otra transición = 409

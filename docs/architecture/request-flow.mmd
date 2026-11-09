@@ -1,0 +1,32 @@
+sequenceDiagram
+    autonumber
+    actor D as Donante
+    participant S as SPA React
+    participant C as Cognito (PA)
+    participant A as API Gateway (PEP)
+    participant L as Lambda + authz (PE)
+    participant T as DynamoDB
+    D->>S: Dona S/ 25.00
+    S->>C: Authorization Code + PKCE (y TOTP si aplica)
+    C-->>S: access token (15 min como máximo)
+    S->>A: POST /v1/donations con Bearer e Idempotency-Key
+    A->>A: Valida emisor, firma, expiración, client_id y scope
+    alt Token inválido, ID token o sin scope
+        A-->>S: 401, Lambda no se ejecuta
+    else Token válido
+        A->>L: Solicitud + claims verificados
+        L->>L: authz: grupo DONANTE y Zod: amountCents entero
+        alt Otro rol o cuerpo inválido
+            L-->>S: 403 o 400, sin efectos
+        else Permitido
+            L->>T: TransactWriteItems condicionado
+            alt Condición no cumplida
+                T-->>L: TransactionCanceledException
+                L-->>S: 409, sin efectos parciales
+            else Transacción aplicada
+                T-->>L: OK
+                L->>L: Log JSON y AuditEvent, sin secretos
+                L-->>S: 201 PENDIENTE_SIMULACION
+            end
+        end
+    end
