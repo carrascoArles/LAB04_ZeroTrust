@@ -9,9 +9,10 @@ Laboratorio 4 de Tópicos Avanzados (EPIS, UNSA). Aplicación serverless con mod
 | Constitución, especificación, clarificación | Hecho |
 | Plan técnico y arquitectura | Hecho |
 | Tareas (`tasks.md`) | Hecho para el backend |
-| Backend | Implementado, con 119 pruebas locales |
-| Frontend | Pendiente: rol disponible |
-| Despliegue y pruebas en AWS | Pendiente |
+| Backend | Implementado, con 122 pruebas locales |
+| Frontend | Pendiente: ver el [plan del equipo](docs/PLAN_EQUIPO.md) |
+| Despliegue en AWS | Pila creada en `us-east-2` |
+| Pruebas en AWS | T01, T02 y T10 verificadas; el resto, pendiente ([evidencia](evidence/aws-infraestructura.md)) |
 
 ## Dónde está cada cosa
 
@@ -24,6 +25,8 @@ docs/architecture/              Diagramas y su código fuente
 docs/api.yaml                   Contrato OpenAPI 3.1
 docs/threat-model.md            STRIDE, mapeo NIST y limitaciones
 backend/                        API en Lambda y pruebas
+scripts/                        Usuarios de prueba, MFA, demo y rendimiento (CloudShell)
+docs/PLAN_EQUIPO.md             Qué hace cada integrante
 frontend/                       SPA (por implementar)
 policies/                       Cedar (extensión HU-12)
 evidence/                       Evidencias sanitizadas
@@ -38,9 +41,9 @@ Empieza por [la arquitectura](docs/architecture/README.md).
 | Rol | Responsable |
 |---|---|
 | Líder técnico; backend y AWS | Carrasco Choque, Arles Melvin |
-| Frontend; SPA y publicación | Disponible |
-| QA, evidencias e informe | Disponible |
-| Identidad, MFA y seguridad | Disponible |
+| Frontend; SPA y publicación | Huamaní Vargas Melsy Melany |
+| QA, evidencias e informe | Llave Apaza, José Rodolfo |
+| Identidad, MFA y seguridad | Yana Agramonte, Luis Efrain |
 
 ## Validar la plantilla sin desplegar
 
@@ -55,6 +58,14 @@ cfn-lint infra/template.yaml
 ## Cuenta y región
 
 Proyecto AWS con la nueva experiencia, Free plan, selected Region `us-east-2`. Los integrantes se invitan como team members desde AWS Settings.
+
+## Desplegar
+
+En AWS CloudShell, desde la raíz del repositorio:
+
+```bash
+(cd backend && npm ci && npm run build) && sam deploy --template-file infra/template.yaml --stack-name aqp-solidaria --region us-east-2 --resolve-s3 --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND --parameter-overrides StageName=academic --confirm-changeset
+```
 
 ## Limpieza
 

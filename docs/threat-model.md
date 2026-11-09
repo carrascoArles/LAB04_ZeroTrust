@@ -56,7 +56,7 @@ Esta decisión no está en `design.md`: surgió al modelar la plantilla SAM.
 **Decisión:** `MfaConfiguration: OPTIONAL`, solo TOTP, con este aprovisionamiento controlado:
 
 1. Crear el usuario sin ningún grupo.
-2. El usuario registra su TOTP y lo marca como preferido.
+2. El usuario registra su TOTP con `scripts/enroll-mfa.sh`, que usa un app client separado cuyos tokens el API rechaza.
 3. Comprobar con `admin-get-user` que `UserMFASettingList` contiene `SOFTWARE_TOKEN_MFA`.
 4. Recién entonces, agregarlo al grupo `GESTOR` o `AUDITOR`.
 
@@ -71,4 +71,5 @@ Esta decisión no está en `design.md`: surgió al modelar la plantilla SAM.
 - **PKCE:** lo inicia el cliente (`oidc-client-ts`). Debe verificarse en la implementación que Cognito rechace un intercambio de código sin `code_verifier` cuando la autorización se inició con `code_challenge`, y documentar el resultado.
 - **ID token frente a CA-03.2:** al exigir scopes, el JWT authorizer podría responder 403 en lugar de 401 ante un ID token. La solicitud se rechaza de todos modos, pero debe comprobarse en AWS (T11) y, si es 403, declararse o ajustarse.
 - **Team members:** la nueva experiencia de AWS no usa usuarios IAM para personas, como pide CA-NF03.3. Pendiente de confirmar con el docente.
+- **Sin límite por usuario:** el throttling es por stage (25 solicitudes por segundo, ráfagas de 50). Un solo usuario podría agotarlo; `design.md` no exige más. Una versión real necesitaría límites por identidad.
 - **Cuenta compartida:** el aislamiento entre integrantes depende de IAM y de la disciplina del equipo.

@@ -231,6 +231,23 @@ describe("simulación (HU-06)", () => {
     expect(await confirmedTotal(projectId)).toBe(102_600);
   });
 
+  it("ráfaga: muchas donaciones distintas a la vez no pierden ningún monto", async () => {
+    const projectId = await newPublishedProject();
+    const amounts = Array.from({ length: 20 }, (_, i) => 100 + i * 7);
+
+    const created = await Promise.all(amounts.map((amount) => donate(projectId, amount)));
+    expect(created.every((r) => r.statusCode === 201)).toBe(true);
+    expect(await history()).toHaveLength(amounts.length);
+
+    const results = await Promise.all(created.map((r) => simulateAs(bodyOf(r).donationId)));
+    // Bajo conflicto puede quedar alguna pendiente (409 reintentable), pero el acumulado debe
+    // ser exactamente la suma de las confirmadas: ni montos perdidos ni contados dos veces.
+    for (const result of results) expect([200, 409]).toContain(result.statusCode);
+    const confirmed = results.flatMap((r, i) => (r.statusCode === 200 ? [amounts[i]!] : []));
+    expect(confirmed.length).toBeGreaterThan(0);
+    expect(await confirmedTotal(projectId)).toBe(confirmed.reduce((sum, a) => sum + a, 0));
+  });
+
   it("BOLA: simular una donación ajena responde 404 y no la cambia", async () => {
     const { projectId, donationId } = await pendingDonation();
     const response = await simulateAs(donationId, CONFIRM, otroDonante);

@@ -14,7 +14,7 @@ const seq = (tag: string) => ({
 /* eslint-disable @typescript-eslint/no-explicit-any */
 export const template: any = parse(
   readFileSync(new URL("../../../infra/template.yaml", import.meta.url), "utf8"),
-  { customTags: [scalar("Ref"), scalar("Sub"), scalar("GetAtt"), seq("Equals")] },
+  { customTags: [scalar("Ref"), scalar("Sub"), scalar("GetAtt"), seq("Equals"), seq("If")] },
 );
 export const contract: any = parse(
   readFileSync(new URL("../../../docs/api.yaml", import.meta.url), "utf8"),

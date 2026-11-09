@@ -2,7 +2,7 @@
 
 **Entrada**: `specs/001-secure-donations-core/` (spec, plan, research, data-model, contracts)
 
-**Alcance de esta lista**: backend y AWS (responsable: líder técnico). El frontend, la identidad operativa y las evidencias se agregan cuando se asignen esos roles.
+**Alcance de esta lista**: backend y AWS (responsable: líder técnico). El trabajo de los demás roles está en `docs/PLAN_EQUIPO.md`.
 
 **Pruebas**: obligatorias por la constitución (principio V). Se escriben primero y deben fallar antes de implementar.
 
@@ -56,11 +56,13 @@
 
 ## Pendiente: requiere AWS o a otros responsables
 
-- [ ] T023 Desplegar con `sam deploy`, previa confirmación del responsable
+- [x] T023 Desplegar con `sam deploy`, previa confirmación del responsable
 - [ ] T024 Ejecutar contra AWS las pruebas que dependen de la plataforma: T02, T11 y T13 (JWT authorizer), T14 (MFA) y T10 (`AccessDenied` real). En T11, comprobar qué código devuelve el authorizer ante un ID token: por la validación de scopes podría ser 403 en lugar del 401 que pide CA-03.2
-- [ ] T025 Crear usuarios de prueba de los cuatro roles según AD-09
-- [ ] T026 Medir rendimiento (SC-003)
-- [ ] T027 Frontend: login PKCE, catálogo, donación, simulación e historial (rol de frontend)
+- [x] T025 Crear `scripts/create-test-users.sh` y `scripts/enroll-mfa.sh` (falta ejecutarlos y redesplegar el client de aprovisionamiento)
+- [ ] T026 Medir rendimiento (SC-003) con `scripts/perf-catalog.sh`
+- [ ] T027 Frontend: login PKCE, catálogo, donación, simulación e historial (ver `docs/PLAN_EQUIPO.md`)
+- [x] T028 Agregar pruebas de ráfaga de donaciones y `scripts/demo-backend.sh`
+- [x] T029 Verificar T01, T02 y T10 en AWS y registrar `evidence/aws-infraestructura.md`
 
 ## Dependencias
 

@@ -1,6 +1,6 @@
 # Backend
 
-API de AQP-SOLIDARIA en TypeScript sobre Node.js 24: 10 handlers Lambda, uno por ruta de [`docs/api.yaml`](../docs/api.yaml). **Sin desplegar todavía.**
+API de AQP-SOLIDARIA en TypeScript sobre Node.js 24: 10 handlers Lambda, uno por ruta de [`docs/api.yaml`](../docs/api.yaml). Desplegado en `us-east-2`; los scripts de prueba están en [`scripts/`](../scripts).
 
 ## Módulos
 

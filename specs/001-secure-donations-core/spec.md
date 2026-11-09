@@ -4,7 +4,7 @@
 
 **Creada**: 2026-11-09
 
-**Estado**: Clarificada; backend implementado, sin desplegar
+**Estado**: Clarificada; backend implementado y desplegado
 
 **Entrada**: "Plataforma de Donaciones Seguras AQP-SOLIDARIA: la Fundación AQP-SOLIDARIA publica proyectos sociales y recibe intenciones de donación simuladas, verificables y auditables, con seguridad Zero Trust. Fuente: `requirements.md` v2.0 y `design.md` v2.0."
 

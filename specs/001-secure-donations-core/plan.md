@@ -4,7 +4,7 @@
 
 **Entrada**: especificación de `/specs/001-secure-donations-core/spec.md`
 
-**Estado**: backend implementado y probado localmente (ver [tasks.md](./tasks.md)). Falta el frontend y no se ha desplegado nada en AWS.
+**Estado**: backend implementado y probado localmente (ver [tasks.md](./tasks.md)). La pila está desplegada en `us-east-2`; falta el frontend y completar las pruebas en AWS.
 
 ## Resumen
 

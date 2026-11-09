@@ -1,6 +1,6 @@
 # Guía de validación
 
-Fase 1 de `/speckit-plan`. Describe cómo validar la funcionalidad. El backend se valida en local; **aún no hay despliegue.**
+Fase 1 de `/speckit-plan`. Describe cómo validar la funcionalidad. El backend se valida en local; en AWS se usan los scripts de `scripts/`.
 
 ## Lo que ya se puede validar, sin cuenta AWS
 

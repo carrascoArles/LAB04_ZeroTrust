@@ -90,6 +90,22 @@ describe("Cognito", () => {
   it("CA-NF10.1: sin autorregistro", () => {
     expect(pool.AdminCreateUserConfig.AllowAdminCreateUserOnly).toBe(true);
   });
+
+  it("AD-09: el client de aprovisionamiento no usa OAuth ni sirve para el API", () => {
+    const provisioning = resources.ProvisioningClient.Properties;
+    expect(provisioning.AllowedOAuthFlows).toBeUndefined();
+    expect(provisioning.AllowedOAuthScopes).toBeUndefined();
+    expect(provisioning.AccessTokenValidity).toBeLessThanOrEqual(15);
+    const { audience } = resources.Api.Properties.Auth.Authorizers.CognitoJwt.JwtConfiguration;
+    expect(audience).not.toContainEqual({ Ref: "ProvisioningClient" });
+  });
+
+  it("localhost solo se admite en el stage académico", () => {
+    const { If: callback } = client.CallbackURLs;
+    expect(callback[0]).toBe("IsAcademic");
+    expect(callback[1]).toContain("http://localhost:5173/callback");
+    expect(callback[2]).not.toContain("http://localhost:5173/callback");
+  });
 });
 
 describe("mínimo privilegio (CA-NF03.1, CA-NF03.2)", () => {
