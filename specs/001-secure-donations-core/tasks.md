@@ -59,7 +59,7 @@
 - [x] T023 Desplegar con `sam deploy`, previa confirmación del responsable
 - [ ] T024 Ejecutar contra AWS las pruebas que dependen de la plataforma: T02, T11 y T13 (JWT authorizer), T14 (MFA) y T10 (`AccessDenied` real). En T11, comprobar qué código devuelve el authorizer ante un ID token: por la validación de scopes podría ser 403 en lugar del 401 que pide CA-03.2
 - [x] T025 Crear `scripts/create-test-users.sh` y `scripts/enroll-mfa.sh` (falta ejecutarlos y redesplegar el client de aprovisionamiento)
-- [ ] T026 Medir rendimiento (SC-003) con `scripts/perf-catalog.sh`
+- [x] T026 Medir rendimiento (SC-003) con `scripts/perf-catalog.sh`: p95 de 0.075 s con 50 proyectos
 - [ ] T027 Frontend: login PKCE, catálogo, donación, simulación e historial (ver `docs/PLAN_EQUIPO.md`)
 - [x] T028 Agregar pruebas de ráfaga de donaciones y `scripts/demo-backend.sh`
 - [x] T029 Verificar T01, T02 y T10 en AWS y registrar `evidence/aws-infraestructura.md`

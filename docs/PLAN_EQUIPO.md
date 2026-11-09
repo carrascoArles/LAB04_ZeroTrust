@@ -22,10 +22,10 @@
 - [ ] Abrir el PR de `001-secure-donations-core` y fusionarlo tras la revisión
 - [ ] Proteger `main` y exigir una revisión y CI en verde
 - [ ] Crear la alerta de presupuesto
-- [ ] Redesplegar para activar el registro de MFA y localhost
-- [ ] Invitar a Luis, Melsy y José como team members desde AWS Settings
-- [ ] Crear los usuarios de prueba: `bash scripts/create-test-users.sh`
-- [ ] Medir rendimiento: `bash scripts/perf-catalog.sh`
+- [x] Redesplegar para activar el registro de MFA y localhost
+- [x] Invitar a Luis, Melsy y José como team members desde AWS Settings
+- [x] Crear los usuarios de prueba: `bash scripts/create-test-users.sh`
+- [x] Medir rendimiento: `bash scripts/perf-catalog.sh` (p95 de 0.075 s; cumple)
 - [ ] Atender errores del API que reporte el equipo
 - [ ] Al cierre: vaciar los buckets, `sam delete` y verificar que no queden recursos
 
