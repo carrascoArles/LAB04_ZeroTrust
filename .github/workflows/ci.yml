@@ -39,6 +39,33 @@ jobs:
       - name: Dependencias de producción
         run: npm audit --omit=dev --audit-level=high
 
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - name: Build y verificación de la CSP (check-csp)
+        run: npm run build
+        env:
+          # Valores ficticios: el build de CI no se publica.
+          VITE_API_URL: https://ci.execute-api.us-east-2.amazonaws.com/academic
+          VITE_COGNITO_DOMAIN: https://ci.auth.us-east-2.amazoncognito.com
+          VITE_USER_POOL_ID: us-east-2_CiPool000
+          VITE_CLIENT_ID: ci-client-id
+      - name: Dependencias de producción
+        run: npm audit --omit=dev --audit-level=high
+
   infrastructure:
     runs-on: ubuntu-latest
     steps:

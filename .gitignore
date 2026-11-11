@@ -8,3 +8,4 @@ coverage/
 samconfig.toml
 informe/
 .vitest/
+!.env.example

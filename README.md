@@ -10,7 +10,7 @@ Laboratorio 4 de Tópicos Avanzados (EPIS, UNSA). Aplicación serverless con mod
 | Plan técnico y arquitectura | Hecho |
 | Tareas (`tasks.md`) | Hecho para el backend |
 | Backend | Implementado, con 122 pruebas locales |
-| Frontend | Pendiente: ver el [plan del equipo](docs/PLAN_EQUIPO.md) |
+| Frontend | Implementado en `003-spa-frontend`, con 87 pruebas locales y recorrido con los cuatro roles en local; falta publicarlo ([frontend/README.md](frontend/README.md)) |
 | Despliegue en AWS | Pila creada en `us-east-2` |
 | Pruebas en AWS | T01, T02 y T10 verificadas; el resto, pendiente ([evidencia](evidence/aws-infraestructura.md)) |
 
@@ -20,6 +20,7 @@ Laboratorio 4 de Tópicos Avanzados (EPIS, UNSA). Aplicación serverless con mod
 .specify/                       Spec Kit: constitución, plantillas y scripts
 .github/skills/                 Comandos de Spec Kit para el agente
 specs/001-secure-donations-core/ Especificación, plan, modelo de datos y contrato
+specs/003-spa-frontend/         Especificación, plan y tareas de la SPA
 infra/template.yaml             Arquitectura como código (AWS SAM)
 docs/architecture/              Diagramas y su código fuente
 docs/api.yaml                   Contrato OpenAPI 3.1
@@ -27,7 +28,7 @@ docs/threat-model.md            STRIDE, mapeo NIST y limitaciones
 backend/                        API en Lambda y pruebas
 scripts/                        Usuarios de prueba, MFA, demo y rendimiento (CloudShell)
 docs/PLAN_EQUIPO.md             Qué hace cada integrante
-frontend/                       SPA (por implementar)
+frontend/                       SPA React, Vite y Tailwind CSS
 policies/                       Cedar (extensión HU-12)
 evidence/                       Evidencias sanitizadas
 requirements.md  design.md      Caso de estudio
