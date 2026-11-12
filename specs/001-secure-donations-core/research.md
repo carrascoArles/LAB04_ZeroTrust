@@ -61,3 +61,10 @@ Fase 0 de `/speckit-plan`. Los datos de servicios y versiones provienen de `desi
 - **Decisión**: una sola batería con dos motores: en memoria (sin dependencias, evalúa las expresiones reales) y DynamoDB Local (también en CI).
 - **Justificación**: el motor en memoria da retroalimentación inmediata; DynamoDB Local comprueba el comportamiento real de las condiciones y transacciones.
 - **Limitación**: ninguno de los dos valida IAM ni el JWT authorizer. Eso se verifica en AWS (T02, T10, T11, T13 y T14).
+
+## R11. Registro de TOTP
+
+- **Decisión**: un segundo app client, `ProvisioningClient`, solo para registrar TOTP con `USER_PASSWORD_AUTH`.
+- **Justificación**: el client de la SPA solo usa OAuth y sus tokens no permiten llamar a `AssociateSoftwareToken`. El login administrado tampoco ofrece el registro con MFA opcional.
+- **Alternativas**: agregar el scope `aws.cognito.signin.user.admin` al client de la SPA (daría a todo token del navegador permisos sobre el perfil del usuario).
+- **Consecuencia**: este client admite contraseña directa, pero no está en la audiencia del JWT authorizer, así que sus tokens no sirven en el API.

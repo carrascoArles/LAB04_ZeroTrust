@@ -103,10 +103,17 @@ Resources:
         - api/donations.read
         - api/audit.read
       SupportedIdentityProviders: [COGNITO]
-      CallbackURLs:
-        - !Sub https://${Distribution.DomainName}/callback
-      LogoutURLs:
-        - !Sub https://${Distribution.DomainName}/
+      # localhost solo existe en el stage academico, para desarrollar la SPA.
+      CallbackURLs: !If
+        - IsAcademic
+        - - !Sub https://${Distribution.DomainName}/callback
+          - http://localhost:5173/callback
+        - - !Sub https://${Distribution.DomainName}/callback
+      LogoutURLs: !If
+        - IsAcademic
+        - - !Sub https://${Distribution.DomainName}/
+          - http://localhost:5173/
+        - - !Sub https://${Distribution.DomainName}/
       ExplicitAuthFlows: [ALLOW_USER_SRP_AUTH, ALLOW_REFRESH_TOKEN_AUTH]
       AccessTokenValidity: 15 # CA-03.3: vigencia menor o igual a 15 minutos
       IdTokenValidity: 15
@@ -116,6 +123,26 @@ Resources:
         IdToken: minutes
         RefreshToken: days
       EnableTokenRevocation: true # CA-03.3
+      PreventUserExistenceErrors: ENABLED
+
+  # Solo para registrar el TOTP de GESTOR y AUDITOR (AD-09, scripts/enroll-mfa.sh).
+  # Sin OAuth ni scopes de la API, y fuera de la audiencia del JWT authorizer: el API
+  # rechaza sus tokens (CA-03.2, token de otro app client).
+  ProvisioningClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref UserPool
+      ClientName: !Sub aqp-solidaria-provisioning-${StageName}
+      GenerateSecret: false
+      ExplicitAuthFlows: [ALLOW_USER_PASSWORD_AUTH, ALLOW_REFRESH_TOKEN_AUTH]
+      AccessTokenValidity: 15
+      IdTokenValidity: 15
+      RefreshTokenValidity: 1
+      TokenValidityUnits:
+        AccessToken: minutes
+        IdToken: minutes
+        RefreshToken: days
+      EnableTokenRevocation: true
       PreventUserExistenceErrors: ENABLED
 
   DonanteGroup:
@@ -153,6 +180,10 @@ Resources:
       CorsConfiguration:
         AllowOrigins:
           - !Sub https://${Distribution.DomainName}
+          - !If
+            - IsAcademic
+            - http://localhost:5173
+            - !Sub https://${Distribution.DomainName}
         AllowMethods: [GET, POST, PATCH, OPTIONS]
         AllowHeaders: [authorization, content-type, idempotency-key]
         MaxAge: 600
@@ -762,5 +793,8 @@ Outputs:
     Value: !Ref UserPool
   UserPoolClientId:
     Value: !Ref UserPoolClient
+  ProvisioningClientId:
+    Description: Client solo para registrar TOTP; el API rechaza sus tokens
+    Value: !Ref ProvisioningClient
   CognitoDomain:
     Value: !Sub https://${UserPoolDomain}.auth.${AWS::Region}.amazoncognito.com
